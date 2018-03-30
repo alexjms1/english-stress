@@ -1,0 +1,701 @@
+---
+title: "English proficiency and study-abroad attitudes"
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{rotating}
+- \usepackage{longtable}
+- \usepackage{dcolumn}
+date: "August 10, 2017"
+output:
+  html_document:
+    toc: yes
+    toc_depth: '2'
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+  word_document:
+    toc: yes
+    toc_depth: '2'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import necessary libraries, read in and clean data
+
+```{r import, message=FALSE, warnings=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lme4)
+library(RLRsim)
+library(corrplot)
+library(stringr)
+library(afex)
+library(mediation)
+library(MASS)
+library(scales)
+library(car)
+library(lsmeans)
+library(foreign)
+library(reporttools)
+library(texreg)
+library(PerformanceAnalytics)
+setwd('C:/users/ajame/Dropbox/English_stress')
+data <- read.csv('All_Data_Original_truncated.csv', stringsAsFactors = FALSE)
+```
+
+First we'll rename some of our variables & label the factors.  We'll create special versions of the factors for IELTS / TOEFL scores including data from those that took the test only, and versions of factors where levels that are highly underrepresented are eliminated.  We'll also create numeric versions of variables that are pseudo-interval / ratio scale.
+```{r}
+data <-data %>% rename(sex = Q1, urban = Q2, wealth_class = Q3, country = Q4, still_abroad = Q5, duration = Q6, major = Q7, traveled_before = Q8, overall_score = Q10, speaking_score = Q11, native_friends = Q48_A1, call_native_friends = Q49_A1, sex_native = Q50, sex_chinese = Q51, community = Q52_A1, bars_chinese = Q53_A1, bars_native = Q54_A1 )
+
+
+
+data$sex <- factor(data$sex, labels = c("Male", "Female"))
+
+data$urban <- factor(data$urban, labels = c("Country", "Urban"))
+
+data$wealth_class <- factor(data$wealth_class, labels= c("Lower class", "Lower-middle class", "Middle class", "Upper-middle class", "Upper class", "Extremely Wealthy")) # note that "extremely wealthy" response is very uncommon and probably not a valid factor level for analysis; upper and lower class are also relatively uncommons
+data$wealth_class_trimmed <- data$wealth_class
+data$wealth_class_trimmed[data$wealth_class_trimmed == "Extremely Wealthy"] <- NA 
+data$wealth_class_no_extreme <- data$wealth_class
+data$wealth_class_no_extreme[data$wealth_class_no_extreme == "Extremely Wealthy"] <- "Upper class"
+data$wealth_class_no_extreme <- factor(data$wealth_class_no_extreme, ordered = FALSE)
+
+data$country <- factor(data$country, labels= c("USA", "Canada", "UK / Ireland", "Australia / New Zealand", "Germany / France / Holland", "Korea / Japan / Singapore", "Other"))
+
+data$still_abroad <- factor(data$still_abroad, labels= c("Still abroad", "Already returned"))
+
+data$duration_numeric <- dplyr::recode(data$duration, `1`=0.5, `2`=1, `3`=1.5, `4`=2, `5`=3, `6`=4)
+
+data$duration <- factor(data$duration, labels= c("0.5 years", "1 year", "1.5 years", "2 years", "3 Years", "4 years or more"), ordered = TRUE)
+
+data$major <- factor(data$major, labels= c("STEM", "Social sciences", "Business", "Arts", "Languages", "Other"))
+
+data$took_test <- factor(data$overall_score != 10, labels = c("Did not take test", "Took test"))
+
+data$overall_score_numeric <- dplyr::recode(data$overall_score, `1` = 5, `2` = 5.5, `3` = 6, `4` = 6.5, `5` = 7, `6` = 7.5, `7` = 8, `8` = 8.5, `9` = 9, `10` = NULL, `11` = 4.5) # extreme values - IELTS < 5.5 and IELTS > 8 are poorly represented in the data
+data$overall_score_numeric_trimmed <- data$overall_score_numeric
+data$overall_score_numeric_trimmed[data$overall_score_numeric_trimmed < 5.5 | data$overall_score_numeric_trimmed > 8] <- NA
+
+data$overall_score <- factor(data$overall_score, levels=levels(factor(data$overall_score))[c(11,1:10)], labels = c("IELTS 4.5 TOEFL 32-34", "IELTS 5 TOEFL 35-45", "IELTS 5.5 TOEFL 46-59", "IELTS 6 TOEFL 60-78", "IELTS 6.5 TOEFL 79-93", "IELTS 7 TOEFL 94-101", "IELTS 7.5 TOEFL 102-109", "IELTS 8 TOEFL 110-114", "IELTS 8.5 TOEFL 115-117", "IELTS 9 TOEFL 118-120", "Did not take"), ordered = TRUE) 
+
+data$overall_score_takers <- data$overall_score
+data$overall_score_takers[data$overall_score_takers == "Did not take"] <- NA
+data$overall_score_takers <- factor(data$overall_score_takers)
+
+data$overall_score_trimmed <- data$overall_score
+data$overall_score_trimmed[data$overall_score_trimmed %in% c("IELTS 4.5 TOEFL 32-34", "IELTS 5 TOEFL 35-45", "IELTS 8.5 TOEFL 115-117", "IELTS 9 TOEFL 118-120")] <- NA
+data$overall_score_trimmed <- factor(data$overall_score_trimmed)
+
+data$overall_score_trimmed_takers <- data$overall_score_trimmed
+data$overall_score_trimmed_takers[data$overall_score_trimmed_takers == "Did not take"] <- NA
+data$overall_score_trimmed_takers <- factor(data$overall_score_trimmed_takers)
+
+data$took_speaking_test <- factor(data$speaking_score != 10, labels = c("Did not take test", "Took test"))
+
+data$speaking_score_numeric <- dplyr::recode(data$speaking_score, `1` = 5, `2` = 5.5, `3` = 6, `4` = 6.5, `5` = 7, `6` = 7.5, `7` = 8, `8` = 8.5, `9` = 9, `10` = NULL, `11` = 4.5)  # extreme values - IELTS < 5.5 and IELTS > 8 are poorly represented in the data
+data$speaking_score_numeric_trimmed <- data$speaking_score_numeric
+data$speaking_score_numeric_trimmed[data$speaking_score_numeric_trimmed < 5.5 | data$speaking_score_numeric_trimmed > 8] <- NA
+
+data$speaking_score <- factor(data$speaking_score, levels=levels(factor(data$speaking_score))[c(11,1:10)], labels= c("IELTS 4.5 TOEFL 12-13", "IELTS 5 TOEFL 14-15", "IELTS 5.5 TOEFL 16-18", "IELTS 6 TOEFL 19-20", "IELTS 6.5 TOEFL 21-22", "IELTS 7 TOEFL 23", "IELTS 7.5 TOEFL 24-25", "IELTS 8 TOEFL 26-27", "IELTS 8.5 TOEFL 28-29", "IELTS 9 TOEFL 30", "Did not take"), ordered = TRUE)
+
+data$speaking_score_takers <- data$speaking_score
+data$speaking_score_takers[data$speaking_score_takers == "Did not take"] <- NA
+data$speaking_score_takers <- factor(data$speaking_score_takers)
+
+data$speaking_score_trimmed <- data$speaking_score
+data$speaking_score_trimmed[data$speaking_score_trimmed %in% c("IELTS 4.5 TOEFL 12-13", "IELTS 5 TOEFL 14-15", "IELTS 8.5 TOEFL 28-29", "IELTS 9 TOEFL 30")] <- NA
+data$speaking_score_trimmed <- factor(data$speaking_score_trimmed)
+
+data$speaking_score_trimmed_takers <- data$speaking_score_trimmed
+data$speaking_score_trimmed_takers[data$speaking_score_trimmed_takers == "Did not take"] <- NA
+data$speaking_score_trimmed_takers <- factor(data$speaking_score_trimmed_takers)
+
+data$sex_native <- factor(data$sex_native, levels = levels(factor(data$sex_native))[c(2,1)], labels = c("No", "Yes"))
+data$sex_chinese <- factor(data$sex_chinese, levels = levels(factor(data$sex_chinese))[c(2,1)], labels = c("No", "Yes"))
+data$traveled_before <- factor(data$traveled_before, levels = levels(factor(data$traveled_before))[c(2,1)], labels= c("Never abroad before", "Abroad before"))
+```
+
+## Demographic data
+
+```{r, results = "asis"}
+#tableNominal(vars = data %>% dplyr::select(sex, wealth_class, urban, traveled_before, country, duration, overall_score, major), vertical = FALSE, lab = "tab: nominal1", longtable = TRUE, cumsum = FALSE, cap = "Demographic characteristics of sample", nams = c('Sex', 'Wealth class', 'Home', 'Prior travel abroad', 'Study abroad country', 'Duration abroad', 'Test score', 'Major'))
+```
+% latex table generated in R 3.4.1 by xtable 1.8-2 package
+% Sun Sep 17 01:07:16 2017
+\begingroup\footnotesize
+\begin{longtable}{llrr}
+ \textbf{Variable} & \textbf{Levels} & $\mathbf{n}$ & $\mathbf{\%}$ \\ 
+  \hline
+Gender & Male & 118 & 32.7 \\ 
+   & Female & 243 & 67.3 \\ 
+   \hline
+\hline
+Wealth class & Lower class & 13 & 3.6 \\ 
+   & Lower-middle class & 52 & 14.4 \\ 
+   & Middle class & 189 & 52.4 \\ 
+   & Upper-middle class & 92 & 25.5 \\ 
+   & Upper class & 13 & 3.6 \\ 
+   & Extremely Wealthy & 2 & 0.6 \\ 
+   \hline
+\hline
+Home & Country & 64 & 17.7 \\ 
+   & Urban & 297 & 82.3 \\ 
+   \hline
+\hline
+Prior travel & Never abroad before & 251 & 69.5 \\ 
+   & Abroad before & 110 & 30.5 \\ 
+   \hline
+\hline
+Study abroad country & USA & 98 & 27.1 \\ 
+   & Canada & 22 & 6.1 \\ 
+   & UK / Ireland & 66 & 18.3 \\ 
+   & Australia / New Zealand & 73 & 20.2 \\ 
+   & Germany / France / Holland & 44 & 12.2 \\ 
+   & Korea / Japan / Singapore & 41 & 11.4 \\ 
+   & Other & 17 & 4.7 \\ 
+   \hline
+\hline
+Duration abroad & 0.5 years & 48 & 13.3 \\ 
+   & 1 year & 133 & 36.8 \\ 
+   & 1.5 years & 39 & 10.8 \\ 
+   & 2 years & 59 & 16.3 \\ 
+   & 3 Years & 42 & 11.6 \\ 
+   & 4 years or more & 40 & 11.1 \\ 
+   \hline
+\hline
+Test score & IELTS 4.5 TOEFL 32-34 & 3 & 0.8 \\ 
+   & IELTS 5 TOEFL 35-45 & 3 & 0.8 \\ 
+   & IELTS 5.5 TOEFL 46-59 & 21 & 5.8 \\ 
+   & IELTS 6 TOEFL 60-78 & 35 & 9.7 \\ 
+   & IELTS 6.5 TOEFL 79-93 & 70 & 19.4 \\ 
+   & IELTS 7 TOEFL 94-101 & 80 & 22.2 \\ 
+   & IELTS 7.5 TOEFL 102-109 & 51 & 14.1 \\ 
+   & IELTS 8 TOEFL 110-114 & 25 & 6.9 \\ 
+   & IELTS 8.5 TOEFL 115-117 & 5 & 1.4 \\ 
+   & IELTS 9 TOEFL 118-120 & 1 & 0.3 \\ 
+   & Did not take & 67 & 18.6 \\ 
+   \hline
+\hline
+Major & STEM & 76 & 21.1 \\ 
+   & Social sciences & 44 & 12.2 \\ 
+   & Business & 129 & 35.7 \\ 
+   & Arts & 34 & 9.4 \\ 
+   & Languages & 61 & 16.9 \\ 
+   & Other & 17 & 4.7 \\ 
+   \hline
+ & all & 361 & 100.0 \\ 
+   \hline
+\hline
+\hline
+\caption{Demographic characteristics of sample} 
+\label{tab: nominal1}
+\end{longtable}
+\endgroup
+## Check for missing data & correlation exploration
+
+```{r missing}
+naPercent <- data %>% summarize_all(funs(sum(is.na(.))/n())) %>% gather(key="variable", value="missing_percent")
+ggplot(naPercent, aes(x=variable, y=missing_percent)) + geom_bar(stat="identity") + theme(axis.text.x = element_text(hjust = 1, angle = 90)) + scale_y_continuous("percent missing data", limits=c(0,1))
+```
+
+No data is missing except for where we explicitly induced missing data. Let's start converting the appropriate variables to factors.  
+
+```{r corr}
+
+correls <- cor(dplyr::select_if(data, is.numeric) %>% dplyr::select(-seq, -status),  use = "pairwise.complete.obs")
+corrplot(correls, order= "hclust", hclust.method = "complete", addrect = 4, rect.lwd = 1, tl.cex = .3)
+```
+
+Subsets of variables: our english confidence measures (Q12-Q15) and stress measures (Q17-Q45)
+```{r corr2}
+
+correls <- cor(data[,str_c('Q', seq(12, 15), '_A1')])
+print(corrplot(correls, order = "hclust", hclust.method = "complete", addrect = 2, rect.lwd = 2, tl.col = "black", addCoef.col = 'red'))
+
+correls <- cor(data[,str_c('Q', seq(17,45), '_A1')])
+print(corrplot(correls, order = "hclust", hclust.method = "complete", addrect = 6, rect.lwd = 1, tl.cex = .6, tl.col = "black"))
+```
+
+## Calcualte alphas, summary scales
+
+Calculate Cronbach's alpha for English ability items (12-15) and study abroad stress (17-45)
+```{r alpha}
+psych::alpha(data[,str_c('Q', seq(12, 15), '_A1')])
+psych::alpha(data[,str_c('Q', seq(17, 45), '_A1')])
+```
+
+Alpha's are good!
+Let's calculate scales (english confidence and stress levels) and plot the dependent measure (stress)
+
+```{r scales}
+data <- data %>% mutate(english_confidence = rowSums(.[str_c('Q', seq(12, 15), '_A1')]))
+data <- data %>% mutate(stress = rowSums(.[str_c('Q', seq(17, 45), '_A1')]))
+
+print(ggplot(data, aes(stress)) + geom_histogram(binwidth = 1))
+print(ggplot(data, aes(english_confidence)) + geom_histogram(binwidth = 1)) + labs(x="English confidence", y="Count", caption = "Figure 4: Histogram of English confidence scores") + theme(plot.caption=element_text(hjust=0))
+```
+
+Looks like an outlier at ~ 140, let's filter and re-plot.  Then let's see what the highest correlations with stress are.
+```{r filter_outlier}
+filtered <- data %>% filter(stress < 130)
+ggplot(filtered, aes(stress)) + geom_histogram() + labs(x="Stress", y="Count", caption = "Figure 5: Histogram of stress scores") + theme(plot.caption=element_text(hjust=0))
+```
+
+Looks reasonably normally-distributed, might benefit from a log transformation but...
+We should probably re-calculate alpha's as well, with the filtered data. 
+
+But first let's replot our correlations plot to look for patterns in the data with our new summary measures.
+```{r cor_plots_summary_measures}
+elim <- c(str_c('Q',seq(12, 15), '_A1'), str_c('Q', seq(17, 49), '_A1'))
+numeric_vars <- dplyr::select(filtered, -c(1:7)) %>% dplyr::select(which(!colnames(.) %in% elim)) %>% mutate_all(as.numeric)
+correls <- cor(numeric_vars,  use = "pairwise.complete.obs")
+corrplot(correls,  tl.cex = .5 , tl.col = "black")
+sort(abs(correls[,'stress']))
+
+```
+## Simple linear models involving English confidence
+
+...we'll look at the residuals from the statistical models before attempting that.
+Try a simple linear model first, predicting reported stress levels from our english confidence measure, including sex and whether the subject has traveled before as covariates.
+```{r models}
+stressModel <- lm(stress ~ english_confidence + sex + traveled_before, data = filtered)
+summary(stressModel)
+par(mfrow=c(2,2))
+plot(stressModel)
+```
+
+Looks like english confidence and whether a person has traveled before are both significant predictors, with the former in the negative direction (greater confidence associated less stress) and with those who have not traveled before experiencing more stress (as expected).  
+
+A nicer plot of the linear model:
+```{r}
+ggplot(filtered, aes(x=english_confidence, y=stress)) + geom_point() + geom_smooth(method="lm") + labs(y="Stress", x="English confidence")
+
+```
+
+Two points on the bottom left look like multivariate outliers, probably have high leverage on the regression equation.  Let's refit the model without these 2 and re-plot.
+
+```{r refilter}
+refiltered <- filtered %>% filter(english_confidence > 4)
+stressModel <- lm(stress ~ english_confidence + sex + traveled_before, data = refiltered)
+summary(stressModel)
+par(mfrow=c(2,2))
+plot(stressModel)
+```
+
+Residual plots look pretty good now (not perfect - still might try log transformation).
+Let's make a nice looking tabular output of the statistical results.
+```{r tabular_res, results = "asis"}
+texreg(stressModel, type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names = "Stress", leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', 'english_confidence' = 'English confidence', 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "English confidence predicts stress scores")
+```
+
+```{r}
+ggplot(refiltered, aes(x=english_confidence, y=stress)) + geom_point() + geom_smooth(method="lm") + labs(y="Stress", x="English confidence", caption = "Figure 6: Linear relationship between English confidence and stress") + theme(plot.caption=element_text(hjust=0))
+```
+
+So it seems there's a nice linear relationship between English confidence and reported levels.  The regression output tells us that for a 1 unit increase in "English confidence level" we can expect about a 0.82 point decrease in reported stress level.  Whether a participant has traveled before is no longer a significant predictor, but it is very close (sex remains non-significant).
+
+Let's also make a correlation matrix between potential covariates and stress.
+
+```{r, message=FALSE, warnings=FALSE}
+numeric_vars_filtered <- refiltered %>% dplyr::select(stress, still_abroad, duration_numeric, wealth_class_no_extreme, sex, community, urban, took_test, traveled_before) %>% mutate_all(funs(as.numeric(.)))
+numeric_vars_filtered$traveled_before <- numeric_vars_filtered$traveled_before - 1
+numeric_vars_filtered$still_abroad <- numeric_vars_filtered$still_abroad - 1
+numeric_vars_filtered$took_test <- numeric_vars_filtered$took_test - 1
+numeric_vars_filtered$sex <- numeric_vars_filtered$sex - 1
+numeric_vars_filtered$urban <- numeric_vars_filtered$urban - 1
+chart.Correlation(R = numeric_vars_filtered , histogram = FALSE, pch = 19)
+
+```
+
+And we'll, just to be safe, do a regression with all these control variables to show that the regression parameters don't change much when they're included.
+
+```{r}
+eng_conf_with_covs <- lm(stress ~ english_confidence + sex + traveled_before + still_abroad + duration_numeric +  wealth_class_no_extreme + urban, data = refiltered )
+summary(eng_conf_with_covs)
+```
+
+Now a regression output in a LaTeX table for this model.
+
+```{r, results = "asis"}
+texreg(eng_conf_with_covs, type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names = "Stress", leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', `english_confidence` = 'English confidence', 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel', 'still_abroadAlready returned' = 'Already returned from study abroad', 'duration_numeric' = 'Duration abroad', 'urbanUrban' = 'Urban upbringing', 'wealth_class_no_extremeLower-middle class' = 'Lower-middle class wealth - Lower class', 'wealth_class_no_extremeMiddle class' = 'Middle class wealth - Lower class', 'wealth_class_no_extremeUpper-middle class' = 'Upper-middle class wealth - Lower class', 'wealth_class_no_extremeUpper class' = 'Upper class wealth - Lower class'), caption = "Adding additional covariates does not improve model fit")
+```
+
+
+## Objective measures; IELTS / TOEFL scores, country effects
+
+Next we're interested in what other factors we've collected data on are predictors of stress - ideally, factors that are more 'objective' measures, such as IELTS/TOEFL scores. 
+
+To start off we'll look at whether those who took the test experienced less stress studying abroad than those that did.  And we'll take a look at the counts for number of subjects who did and did not take the test.
+
+```{r}
+took_test_model <- lm(stress ~ took_test + sex + traveled_before, data  = refiltered)
+summary(took_test_model)
+ggplot(refiltered, aes(x=took_test, y=stress)) + geom_boxplot() + labs(x = "IELTS / TOEFL", y="Stress")
+table(refiltered$took_test)
+```
+
+Looks like stress levels didn't differ much according to whether one took the test or not.  This doesn't tell us much about how doing well on the test relates to stress, so next, let's look at how they relate to the scores themselves (amongst those that took the test).  But first we'll generate a histogram to see our distribution of scores, because we suspect that there many not be many people who received the highest and lowest scores, so those data points may not be very informative in our statistical models.  We'll also produce a table of the counts.
+
+```{r}
+table(refiltered$overall_score_numeric)
+ggplot(refiltered, aes(x=overall_score_numeric)) + geom_histogram() + scale_x_continuous("IELTS (or similar TOEFL) score", breaks = seq(4.5, 9, by=.5), minor_breaks =  NULL) + labs(y = "Count")
+```
+
+As we suspected, very few subjects received the highest scores (> 8.0) or the lowest (< 5).  Let's exclude them from our analyses since they're outliers and it's difficult for us to infer about them.  This means we'll exclude `r 3+5` subjects, plus the `r sum(refiltered$overall_score=="Did not take")` subjects who did not report taking the test. This is given in our variable `overall_score_numeric_less_trimmed` which we calculated in the first few code blocks.  First let's analyze whether score predicts stress levels.
+
+```{r}
+refiltered$overall_score_numeric_less_trimmed <- refiltered$overall_score_numeric
+refiltered$overall_score_numeric_less_trimmed[refiltered$overall_score_numeric_less_trimmed == 9] <- NA
+refiltered$overall_score_numeric_less_trimmed[refiltered$overall_score_numeric_less_trimmed == 4.5] <- NA
+score_model <- lm(stress ~ overall_score_numeric_less_trimmed + sex + traveled_before, data = refiltered)
+summary(score_model)
+```
+
+```{r, results="asis"}
+texreg(score_model, type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names = "Stress", leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', 'overall_score_numeric_less_trimmed' = 'Test scores', 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "No overall relationship between test scores and stress")
+```
+
+
+So overall score isn't a significant predictor at a group level.   We're a little surprised by this result, given that, as shown below, IELTS / TOEFL score is correlated with English confidence, which was associated with stress levels (we'll come back to this point):
+
+```{r}
+cor.test(refiltered$overall_score_numeric_less_trimmed, refiltered$english_confidence)
+
+```
+
+So what might account for this?   We hypothesized that the impact of test scores might differ according to where a subject studied abroad - the country where they stayed.  First let's graph stress levels by country, and test whether there are differences by country.
+
+```{r}
+ggplot(refiltered, aes(x=country, y=stress)) + geom_boxplot() + labs(x="Country", y="Stress" , caption = "Figure 7: Stress levels reported by country") + scale_x_discrete(labels = wrap_format(16)) + theme(plot.caption=element_text(hjust=0))
+stress_by_country <- lm(stress ~ country, data = refiltered)
+summary(stress_by_country)
+Anova(stress_by_country, type = "III")
+```
+
+So it does look like there's a little heterogeneity in stress levels according to country, with USA students experiencing the most stress.  There's not an overall effect of country but there are a few differences from the US.  
+
+```{r, results = "asis"}
+texreg(stress_by_country, type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names = "Stress", leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', 'countryCanada' = 'Canada - USA', 'countryUK / Ireland' = ']UK / Ireland - USA', 'countryAustralia / New Zealand' = 'Australia / New Zealand - USA', 'countryGermany / France / Holland' = 'Germany / France / Holland - USA', 'countryKorea / Japan / Singapore' = 'Korea / Japan / Singapore - USA', 'countryOther' = 'Other - USA'), caption = "Differences in stress scores from USA by country")
+
+```
+
+We'll proceed with our analysis of whether test scores' relationship with stress levels differ by county (`overall_score_numeric_trimmed:country` interaction), excluding subjects who responded "Other" since subjects in this group don't necessarily form a meaningful / cohesive group for statistical analysis.
+
+```{r}
+noOtherCountry <- refiltered %>% filter(country != "Other")
+countryModel <- lm(stress ~ overall_score_numeric_less_trimmed * country + sex + traveled_before, data = noOtherCountry)
+Anova(countryModel, type = "III")
+```
+
+So we do have a significant `overall_score_numeric_trimmed:country` interaction, as well as a significant main effect of both variables.  We note that this is not true for English confidence - only a main effect of English confidence (and previous travel):
+
+```{r}
+Anova(lm(stress ~ english_confidence * country + sex + traveled_before, data = noOtherCountry), type = "III")
+```
+
+Here are the marginal means for stress levels by country, followed by the estimates of the slopes for `overall_score_numeric_less_trimmed` by country:
+```{r}
+lsmeans(countryModel, ~ overall_score_numeric_less_trimmed * country)
+countryTrends <- lstrends(countryModel, ~ country, var = "overall_score_numeric_less_trimmed")
+cld(countryTrends)
+```
+
+So it looks like in the USA, UK, and Australia, a higher test score is associated with lower stress levels.  This is interesting because these are all the countries, except Canada, where English is actually the native language.  Students who study in Canada experience the lowest stress of the group, and there is essentially a null effect of test scores on stress levels in Canada (trend = -0.6, i.e., near zero), so there may be something special going on for this country.   Also, the .group output shows us that the effect of test scores on stress levels for students in the USA is significantly different than the effect of test scores in Germany / France / Holland: whereas higher test scores are associated with lower stress in the USA (slope = -9.3, so for every 1 point increase in test scores, we expect 9.3 lower reported stress "level"), the opposite is true in Germany / France / Holland.  This is sort of hard to explain!  But an important insight from this analysis is that the effect of test scores does appear to be important within the US.   Let's perform individual regressions on the various countries, and then plot a graph with regression lines by country.  A linear mixed-effects approach was also conducted to capture heterogeneity by country, which is presented at the end of this document - this analysis produced similar results (though not all random effects of country were found to be statistically significant); it also indicated that countries with the highest (intercept) stress levels also showed the greatest improvement in stress with higher test scores, while those with the lowest stress levels were the ones where higher test scores were associated with higher stress.  
+
+```{r}
+countries <- unique(refiltered$country)
+countries_list <- list()
+countries_names <- character(0)
+counter <- 0
+for(i in countries) {
+  counter <- counter + 1
+  countries_names[counter] <- i
+  countries_list[[counter]] <- lm(stress ~ overall_score_numeric_less_trimmed + traveled_before + sex, data = refiltered, subset = country == i)
+  print(paste0("Country = ", i))
+  print(summary(countries_list[[counter]]))
+}
+ggplot(refiltered, aes(x=overall_score_numeric_less_trimmed, y=stress, color=country)) + geom_jitter(width = .05) + geom_smooth(method="lm", se = FALSE) + labs(y="Stress",  caption = "Figure 8: Relationship between English confidence and stress by country") + scale_colour_discrete("Country") + scale_x_continuous("IELTS (or similar TOEFL) score", breaks = seq(4.5, 9, by=.5), minor_breaks =  NULL) + theme(plot.caption=element_text(hjust=0))
+```
+
+Only in the USA - notably, the country with the highest average reported stress - did test scores significantly relate to stress levels, with a one point IELTS score increase being associated with a 7.128 point decrease in stress.  Thus, it is possible that test scores are predictive of lower stress in settings where stress has a greater likelihood of being higher.  
+
+```{r, results = "asis"}
+texreg(countries_list, type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = TRUE, use.packages = FALSE, single.row = FALSE, custom.model.names = countries_names, leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', 'overall_score_numeric_less_trimmed' = 'Test scores', 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "Relationship between test scores and stress by country")
+```
+
+Analyzing only countries where sample was large enough - first we graph the percent of people who took the exam by country
+
+```{r}
+table(refiltered$country, refiltered$took_test)
+ggplot(refiltered, aes(x=country, fill=took_test)) + geom_bar(position="stack") + labs(x="Country", y="Count" , caption = "Figure 9: Number of subjects who did or did not take English exams by country") + scale_x_discrete(labels = wrap_format(13)) + theme(plot.caption=element_text(hjust=0), legend.title = element_blank())
+Anova(lm(stress ~ overall_score_numeric_less_trimmed * country + sex + traveled_before, data = refiltered), type = "III")
+
+refiltered <- refiltered %>% mutate(good_sample_countries = ifelse(country == "USA" | country == "UK / Ireland" | country == "Australia / New Zealand", 1,0))
+refiltered$good_sample_countries <- factor(refiltered$good_sample_countries, labels = c("Lower sample", "Higher sample"))
+
+good_vs_bad_countries <- lm(stress ~ overall_score_numeric_less_trimmed * good_sample_countries + sex + traveled_before, data = refiltered)
+summary(good_vs_bad_countries)
+
+lsmeans(good_vs_bad_countries, ~ overall_score_numeric_less_trimmed * good_sample_countries)
+nativeTrends <- lstrends(good_vs_bad_countries, ~ good_sample_countries, var = "overall_score_numeric_less_trimmed")
+cld(nativeTrends)
+
+only_good_countries <- lm(stress ~ overall_score_numeric_less_trimmed + sex + traveled_before, data = refiltered, subset = good_sample_countries == "Higher sample")
+only_bad_countries <- lm(stress ~ overall_score_numeric_less_trimmed + sex + traveled_before, data = refiltered, subset = good_sample_countries == "Lower sample")
+split_countries_model_list = list(good_vs_bad_countries, only_good_countries, only_bad_countries)
+```
+
+Outputting a table of the results from this approach
+
+```{r, results = "asis"}
+texreg(split_countries_model_list, type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names = c('', 'High sample', 'Low sample'), leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', 'overall_score_numeric_less_trimmed' = 'Test scores', 'good_sample_countriesHigher sample' = 'High sample', 'overall_score_numeric_less_trimmed:good_sample_countriesHigher sample' = 'Test scores x high sample', 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "The relationship of test scores and stress, segregated by country sample size")
+```
+
+## Mediation model: scores, confidence, and stress
+
+Returning to the idea that test scores are correlated with English confidence but to not show a main effect on stress alone but rather show an effect on stress that is moderated by country, perhaps we an explain this further.   Test scores are an 'objective' measure, while English confidence comprised of a series of subjective self-report Likert-style qestions.   Importantly, the stress measure is also a subjective self-report scale, so perhaps it is not so surprising that there appear to be a more evident direct relationship between English confidence and stress - i.e., someone who is engaging in adaptive coping strategies, feels 'good', might tend to report higher subjective confidence in their language and correspondingly lower stress.  Perhaps the fact that both of these are self-reported subjective measures explains their greater correspondence, which could explain why this relationship does not appear to be dependent on the country where one is studying.  That is, the correspondence between psychological measures would not necessarily be expected to depend on country of residence.  However, our correlation test did indicate that test scores are correlated with English confidence.  Perhaps this objective measure of English ability is abstracted into the psychological measure of English confidence, which ultimately mediates the predictive relationship between test scores and stress.  We'll test this directly using a mediation analysis: we will test whether there is a statistically significant indirect effect of test scores (or association with test scores) on stress acting through English confidence - whether English confidence mediates the relationship between test scores and stress.  
+
+```{r, cache = TRUE}
+m <- lm(english_confidence ~ overall_score_numeric_less_trimmed + sex + traveled_before, data = refiltered)
+y <- lm(stress ~ english_confidence + overall_score_numeric_less_trimmed + sex + traveled_before, data = refiltered)
+med_scores_conf_stress <- mediate(m, y, sims = 100, boot = TRUE, mediator = "english_confidence", treat = "overall_score_numeric_less_trimmed", control.value = 12, treat.value = 13)
+summary(med_scores_conf_stress)
+```
+
+```{r, results = "asis"}
+texreg(list(m,y), type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names = c('Mediator: English confidence', 'Stress'), leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', 'overall_score_numeric_less_trimmed' = "$a$, \\textit{c'}: Test scores", 'english_confidence' = '$b$: English confidence','sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "English confidence mediates the relationship between test scores and stress. $ab$ = -1.661. 95\\% confidence interval: [-2.88, -0.57], \\textit{p} = 0.002")
+```
+
+What this tells is is that there is a significant Average Causal Mediated Effect (ACME) but no significant Average Direct Effect (ADE).  The ACME is calculated as `a*b` where `a` is derived from the mediation regression equation `Y(mediator: English confidence) = a*test score + X*covariates + e`, and `b` is derived from the equation `Y(stress) = b*English confidence + c'*test_score + X*covariates + e`. `c'` is the ADE.  The ACME test statistic is calculated by bootstrap resampling.  Thus it appears that the association between test scores and stress levels is mediated by English confidence, i.e., it has an indirect effect on test scores that is mediated through its effect on English confidence.  The absence of a significant ADE indicates 'full' mediation - once the mediator is controlled for, there's no significant effect of test scores on stress.  Note that because this study did not perform experimental manipulation we cannot interpret our mediated effects as causal, but rather only associative.
+
+This result is consistent with the hypothesis that higher test scores are associated with higher self-appraisal of English ability (English confidence), which in turn is associated with lower levels of self-appraised stress (or, correspondingly, higher degree of self-appraised well-being).
+
+## More mediation models
+
+The relationship between test scores, English confidence, and stress is interesting, but perhaps we can dig a little deeper.  It makes sense that an objective measure of English ability such as IELTS / TOEFL would be abstracted into a psychological measure - English confidence - in order to be associated with the psychological measure of stress.  But is there another factor that mediates the relationship between English confidence and stress?  How does English confidence translate into lower stress levels - through potential coping mechanisms?  One possible factor is that it is associated with greater social interaction, which in turn ameliorates stress levels.  
+
+First let's see if English confidence is predictive of likelihood / frequency of interaction with native friends, as measured on a 5-point Likert scale.  This dependent measure is an ordinal scale variable so we'll use an ordered logit model.  We'll also plot the data with a linear regression line for reference.
+
+```{r}
+refiltered$friends_factor <- factor(refiltered$native_friends)
+friends <- polr(friends_factor ~ english_confidence + sex + traveled_before, data = refiltered, Hess = TRUE)
+coefs <- coef(summary(friends))
+ps <- pnorm(abs(coefs[,'t value']), lower.tail = FALSE) * 2
+ptable <- cbind(coefs, "p value" = ps)
+ptable
+ggplot(refiltered, aes(x=friends_factor, y=english_confidence)) + geom_boxplot() +  labs(x="Degree of interaction with native friends", y="English confidence", caption = "Figure 10: Higher English confidence is associated with greater interation with native friends") +  theme(plot.caption=element_text(hjust=0)) + coord_flip()
+```
+
+So it looks like there's a significant relationship between English confidence and social interaction with natives - a 1 unit increase in English confidence is associated with .25 log odds increase in probability of a higher reported value on the likert scale of social interaction.   Next we'll see if social interaction is related to stress levels.
+```{r}
+Anova(lm(stress ~ friends_factor + traveled_before + sex, data = refiltered), type = "III")
+```
+
+Looks like interaction with friends is very significantly predictive of stress levels.  Let's plot the relationship.
+```{r}
+ggplot(refiltered, aes(x=friends_factor, y=stress)) + geom_boxplot() + labs(x="Degree of interaction with native friends", y="Stress")
+```
+
+We now have pretty good reason to believe social interaction with friends might mediate the relationship between English confidence and stress levels.   Let's run the mediation analysis.
+
+```{r, cache = TRUE}
+m <- friends
+y <- lm(stress ~ friends_factor + english_confidence + sex + traveled_before, data=refiltered)
+med_conf_friends_stress <- mediate(m, y, sims = 100, boot = TRUE, mediator = "friends_factor", treat = "english_confidence", control.value = 12, treat.value = 13)
+summary(med_conf_friends_stress)
+```
+
+The mediation analysis using the ordered logit model doesn't correspond well with our intuitive sense of the data, with English confidence related to social interaction, which is related to stress.  Indeed, adding social interaction to the model predicting stress makes English confidence no longer significant, strongly suggesting a mediated effect:
+
+```{r}
+Anova(y, type = "III")
+```
+
+Perhaps this is due to our use of the ordered logit model, meaning the coefficients don't combine well to form the `a*b` indirect effect in the mediation analysis, because one is on the log-odds scale (the model with the mediator as the dependent measure) and one is on the linear scale (the model with stress as the dependent measure).  Let's refit the former on a linear scale - as is sometimes done when analyzing a likert scale - and see how our mediation analysis turns out.  We'll repolot the relationship between social interaction and stress as a linear trend for good measure.
+
+```{r, cache = TRUE}
+m <- lm(native_friends ~ english_confidence + sex + traveled_before, data = refiltered)
+summary(m)
+y <- lm(stress ~ native_friends + english_confidence + sex + traveled_before, data = refiltered)
+med_conf_friends_stress_linear <- mediate(m, y, sims = 100, boot = TRUE, mediator = "native_friends", treat = "english_confidence", control.value = 12, treat.value = 13)
+summary(med_conf_friends_stress_linear)
+ggplot(refiltered, aes(x=friends_factor, y=stress)) + geom_boxplot() + geom_smooth(method="lm") + labs(x="Degree of interaction with native friends", y="Stress", caption = "Figure 11: Higher interaction with native friends is associated with lower stress") +  theme(plot.caption=element_text(hjust=0))
+```
+
+So using the linear models we have evidence of an ACME: the relationship between English confidence and stress is mediated by degree of social interaction with native friends.  Finally, let's output this model to a table.
+
+```{r, results = "asis"}
+texreg(list(m,y), type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names =c('Mediator: Native friends', 'Stress'), leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', "english_confidence" = "$a$, \\textit{c'}: English confidence", 'native_friends' = "$b$: Native friends", 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "Interaction with native friends mediates the relationship between English confidence and stress. $ab$ = -0.484. 95\\% confidence interval: [-0.76, -0.24], \\textit{p} < $10^{-16}$")
+       
+
+```
+
+## Multiple mediator model
+
+We now have 2 conceptual mediation models:
+
+* Test scores -> English confidence -> stress
+* English confidence -> native friends -> stress
+
+What we want to do now is see if we can combine these models, using a multi-mediator approach:
+
+* Test scores -> English confidence -> native friends -> stress
+
+That is, we want to test if the effect of test scores is mediated by English confidence, the effect of which is mediated by social interaction, in a single statistical model that accounts for all possible sub-model paths such as:
+
+* Test scores -> stress  
+* Test scores -> English confidence -> stress  
+* Test scores -> English confidence -> native friends -> stress  
+* Test scores -> native friends -> stress  
+
+We can't perform multiple serial/parallel mediation analysis using a continuous treatment variable as ours, test scores, is using the `medation` package in R, so we'll export the data frame to SPSS.  We'll rename a few variables first to make our output in SPSS more readable because the PROCESS macro in SPSS does not allow for long variable names.
+
+```{r}
+refiltered %>% rename(confidence = english_confidence, test_scores_less_trimmed_numeric = overall_score_numeric_less_trimmed) %>% write.foreign("C:/Users/ajame/Dropbox/English_stress/english_stress.txt", "C:/Users/ajame/Dropbox/English_stress/english_stress.sps", package="SPSS")
+``` 
+
+
+The output of these analyses are found in [multiple_mediators.htm](./multiple_mediators.htm).  Bootstrap estimation of confidence intervals indicates that the the paths in **bold** below are statistically significant:
+
+* Test scores -> stress  
+* Test scores -> English confidence -> stress  
+* **Test scores -> English confidence -> native friends -> stress**  
+* **Test scores -> native friends -> stress**  
+
+Thus, there is no direct effect of test scores on stress, but test sccores act indirectly on stress through its influence on engagement with native friends, and through its influence on English confidence which in turn afffects native friendships which in serial affects stress.  Both paths have negative coefficients, such that higher test scores are associated with lower stress indirectly through mediator variables.
+
+We will use R to generate the associated regression output table in LaTeX format though.
+
+```{r}
+m1_confidence <- lm(english_confidence ~ overall_score_numeric_less_trimmed + sex + traveled_before, data = refiltered)
+m2_friends <- lm(native_friends ~ overall_score_numeric_less_trimmed + english_confidence + sex + traveled_before, data = refiltered)
+y <- lm(stress ~ overall_score_numeric_less_trimmed + english_confidence + native_friends + sex + traveled_before, data = refiltered)
+```
+
+```{r, results = "asis"}
+texreg(list(m1_confidence, m2_friends, y), type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names =  c('Mediator: English confidence', 'Mediator: Native friends', 'Stress'), leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)','overall_score_numeric_less_trimmed' = "$a_1$, $a_2$, \\textit{c'}: Test scores", "english_confidence" = "$d_{21}$, $b_1$: English confidence", 'native_friends' = "$b_2$: Native friends", 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "English confidence and interaction with native friends in conjunction mediate the relationship between test scores and stress. English confidence: $ab$ = -1.01, 95\\% confidence interval: [-2.34, 0.004]. Native friends: $ab$ = -.58, 95\\% confidence interval: [-1.51, -0.06]. Serial mediation: $a_1 d_{21} b_2$ = -0.65, 95\\% confidence interval: [-1.28, -.24]")
+```
+
+## Secondary analyses
+
+Here we analyze whether stress levels and English confidence are predictive of sexual experiences with either a person native to the country where the student studies abroad (`sex_native`) or with a Chinese person while studying abroad (`sex_chinese`), using 2 logistic regressions.   We then ask whether sexual experiences are predictive of stress levels.   
+
+```{r}
+refiltered$had_sex <- refiltered$sex_native == "Yes" | refiltered$sex_chinese == "Yes"
+refiltered$had_sex <- factor(refiltered$had_sex, labels = c('No', 'Yes'))
+sex_native_glm <- glm(sex_native ~  english_confidence + sex + traveled_before, family="binomial", data = refiltered)
+summary(sex_native_glm)
+sex_chinese_glm <- glm(sex_chinese ~  english_confidence + sex + traveled_before, family="binomial", data = refiltered)
+summary(sex_chinese_glm)
+stress_sex <- lm(stress ~ sex_native + sex_chinese + sex + traveled_before, data = refiltered)
+summary(stress_sex)
+stress_any_sex <- lm(stress ~ had_sex + sex + traveled_before, data = refiltered)
+summary(stress_any_sex)
+refiltered$prediction_sex_native <- predict(sex_native_glm, newdata = refiltered, type = "response")
+ggplot(refiltered, aes(x=english_confidence, y=as.numeric(sex_native)-1)) + 
+  geom_jitter(width = .1, height = .1, alpha = .3) + 
+  geom_line(aes(x=english_confidence, y=prediction_sex_native), color = "blue", lwd = 1, lineend="round", linejoin = "mitre") +
+  scale_y_discrete(limits = c(0,1), labels = c('No (0)', 'Yes (1)')) + 
+  theme(aspect.ratio = .4, plot.caption=element_text(hjust=0)) + 
+  labs(x = "English confidence", y = "Sex: native", caption = "Figure 13: English confidence predicts likelihood of reporting sexual experience with native")
+```
+
+```{r, results = "asis"}
+texreg(list(sex_native_glm, sex_chinese_glm, stress_sex), type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names =  c('Sex: native', 'Sex: Chinese', 'Stress'), leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, include.aic = FALSE, include.loglik = FALSE, include.deviance = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)','english_confidence' = 'English confidence', 'sex_nativeYes' = 'Sex: native', 'sex_chineseYes' = 'Sex: Chinese', 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "The effect of English confidence on sexual experiences and sexual experiences on stress")
+```
+
+The results indicate that English confidence, but not gender, is predictive of sexual experiences with natives (1 unit increase in English confidence is associated with a .35 log-odds increase in likelihood to report a sexual experience), while gender, but not English confidence, is predicitve of sexual experiences with Chinese (females are 1.30 log odds less likely to report a sexual experience).  These results make fairly good intuitive sense.  Sexual experiences with neither natives nor Chinese are predictive of stress levels.
+
+A mediation analysis, shown below, shows only a direct effect of English confidence on stress, i.e., this effect is not mediated by sexual experiences with natives.
+```{r, cache = TRUE}
+refiltered$sex_native_numeric <- as.numeric(refiltered$sex_native) - 1
+m <- glm(sex_native_numeric ~ english_confidence + sex, family = "binomial", data = refiltered)
+y <- lm(stress ~ english_confidence + sex_native_numeric + sex, data = refiltered)
+med_conf_sex_stress <- mediate(m, y, sims = 100, boot = TRUE, mediator = "sex_native_numeric", treat = "english_confidence", control.value = 12, treat.value = 13)
+summary(med_conf_sex_stress)
+```
+
+
+We'll next analyze whether duration abroad is associated with stress levels.   First we'll plot the distribution of durations, followed by the stress levels by duration of stay.  
+```{r}
+ggplot(refiltered, aes(x=duration)) + geom_histogram(stat="count") + labs(x="Duration abroad", y="Count")
+```
+```{r}
+ggplot(refiltered, aes(x=duration, y=stress)) + geom_boxplot() + labs(x="Duration abroad", y="Stress", caption = "Figure 14: No relationship between duration abroad and stress") + theme(plot.caption=element_text(hjust=0))
+```
+
+THere's no clear relationship between duration abroad and stress levels evident in this graph.   We'll run the regressions to confirm this.
+
+```{r}
+Anova(lm(stress ~ duration + sex + traveled_before, data = refiltered), type = "III")
+```
+
+
+The effect of duration is actually pretty close to statistically significant, which is somewhat surprising.  Let's treat the `duration` as an numeric variable, `duration_numeric`,  to see if there's a linear trend.
+
+```{r}
+duration_model <- lm(stress ~ duration_numeric + sex + traveled_before, data = refiltered)
+summary(duration_model)
+```
+
+Here we see no evidence of an effect of duration of stay, so taking the above results together, we conclude an absense of a relationship in this dataset. We'll output a table of this result.
+```{r, results="asis"}
+texreg(duration_model, type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names = "Stress", leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', 'duration_numeric' = 'Duration abroad', 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "No relationship between duration abroad and stress was found")
+```
+
+Finally we'll do a quick analysis of wealth class.   We put 'extremely wealthy' into the 'upper class category' because there are only 2 'extremely wealthly'
+
+```{r}
+
+wealth_model <- lm(stress ~ wealth_class_no_extreme + sex + traveled_before, data = refiltered)
+summary(wealth_model)
+Anova(wealth_model, type = "III")
+ggplot(refiltered, aes(x=wealth_class_no_extreme, y=stress)) + geom_boxplot() + labs(x="Wealth class", y="Stress", caption = "Figure 15: No relationship between reporeted wealth class and stress") + theme(plot.caption=element_text(hjust=0))
+```
+
+```{r, results = "asis"}
+texreg(wealth_model, type = "html",  digits = 3, bold = .05, booktabs = TRUE, sideways = FALSE, use.packages = FALSE, single.row = FALSE, custom.model.names = "Stress", leading.zero = TRUE, stars = c(0.05, 0.01, 0.001), custom.note = "\\parbox{.4\\linewidth}{\\vspace{2pt}%stars. \\\\Results are as coefficient (standard error).}",  include.nobs = TRUE, include.adjrs = TRUE, include.fstatistic = FALSE, include.rmse = FALSE, custom.coef.map = list('(Intercept)' = '(Constant)', 'wealth_class_no_extremeLower-middle class' = 'Lower-middle - Low', 'wealth_class_no_extremeMiddle class' = 'Middle - Low', 'wealth_class_no_extremeUpper-middle class' = 'Upper-middle - Low', 'wealth_class_no_extremeUpper class' = 'Upper - Low', 'sexFemale' = 'Gender (Female)', 'traveled_beforeAbroad before' = 'Prior travel'), caption = "No relationship between wealth class and stress was found")
+```
+
+The regression output indicated there was an effect of traveled before on stress - a result we've seen multiple times before - but it begs the question of whether those with higher incomes have traveled abroad before more in our sample.   Let's do a chisq test to see if that's the case, and graph the result.
+```{r}
+tbl <- table(refiltered$wealth_class_no_extreme, refiltered$traveled_before)
+chisq.test(tbl)
+per_abroad_before <-  refiltered %>% group_by(wealth_class_no_extreme) %>% summarise(per = mean(traveled_before == "Abroad before"))
+ggplot(per_abroad_before, aes(x=wealth_class_no_extreme, y=per)) + geom_bar(stat="identity") + labs(x="Wealth class", y="Percent abroad before", caption = "Figure 16: Wealth class is related to likelihood of prior abroad experiences") + theme(plot.caption=element_text(hjust=0))
+```
+
+## Mixed-models
+
+Next we'll used a mixed model with data clustered by country where studying took place to look at heterogeneity in the effect of English confidence and test scores on stress.
+```{r mixed, cache = TRUE}
+stressMM <- mixed(stress ~ english_confidence +  sex + traveled_before + (1|country), data = noOtherCountry) # for testing p-value of fixed effect
+stressMMlmer <- lmer(stress ~ english_confidence + sex + traveled_before + (1|country), data = noOtherCountry) # for testing p-value of random effect using RLRT
+stressMMscores <- lmer(stress ~ overall_score_numeric_trimmed + sex + traveled_before + (1|country), data = noOtherCountry)
+
+summary(stressMM)
+print(stressMM)
+exactRLRT(m=stressMMlmer)
+exactRLRT(m=stressMMscores)
+```
+
+A random intercept does not seem to be quite significant - what about a random slope model? or a random intercept + slope (no covariance so we can test 1 random effect at a time with `exactRLRT`)?
+```{r mixed_RIRS}
+MM_RI <- stressMMlmer
+MM_RI_RS_nocov <-  lmer(stress ~ english_confidence + sex + traveled_before + (1 + english_confidence||country), data = noOtherCountry)
+MM_RS <- lmer(stress ~ english_confidence + sex + traveled_before + (0 + english_confidence|country), data = noOtherCountry)
+MM_RS_scores <- lmer(stress ~ overall_score_numeric_trimmed + sex + traveled_before + (0 + overall_score_numeric_trimmed|country), data = noOtherCountry)
+exactRLRT(m = MM_RS, mA = MM_RI_RS_nocov, m0 = MM_RI)
+exactRLRT(m = MM_RS)
+exactRLRT(m = MM_RS_scores)
+```
+
+Neither are significant.  Let's look at the random slope + intercept model anyway.   See explanation above - negative correlation between random country intercepts and random slopes for English confidence, indicating that those countries higher stress also showed the most reduction in stress with higher test scores.  This is also true for test scores.
+```{r}
+MM_RI_RS <- lmer(stress ~ english_confidence + sex + traveled_before + (1 + english_confidence | country), data = noOtherCountry)
+summary(MM_RI_RS)
+summary(lmer(stress ~ overall_score_numeric_trimmed + sex + traveled_before + (1 + overall_score_numeric_trimmed|country), data = noOtherCountry))
+```
